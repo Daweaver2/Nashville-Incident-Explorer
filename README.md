@@ -1,2 +1,8 @@
-# Nashville-Incident-Explorer
-A website that allows for searching of Incident reports in the nashville area based on the civilian portal data.nashville.gov and it's data.
+# Nashville Incident Explorer
+
+A full-stack web application for exploring and querying Nashville (MNPD) open incident data.
+
+## Tech Stack
+* **Frontend:** React (Vite)
+* **Backend:** Node.js, Express
+* **Database:** MySQL

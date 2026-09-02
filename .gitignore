@@ -1,0 +1,33 @@
+# --- DEPENDENCIES ---
+node_modules/
+jspm_packages/
+
+# --- PRODUCTION BUILDS & CACHES ---
+/client/dist/
+/client/build/
+.vite/
+dist/
+
+# --- ENVIRONMENT VARIABLES & SECRETS ---
+.env
+.env.local
+.env.*.local
+
+# --- LOGS & DEBUG FILES ---
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.log
+
+# --- OS & EDITOR ARTIFACTS ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
