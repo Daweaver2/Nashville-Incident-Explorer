@@ -1,0 +1,7 @@
+{
+  "name": "nashville-incident-explorer",
+  "private": true,
+  "scripts": {
+    "dev": "node dev.js"
+  }
+}

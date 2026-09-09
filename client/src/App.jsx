@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import L from 'leaflet'
 import { Circle, CircleMarker, MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -6,7 +6,7 @@ import './App.css'
 
 const NASHVILLE_CENTER = [36.1627, -86.7816]
 
-function ResetMapButton() {
+function ResetMapButton({ onReset }) {
   const map = useMap()
 
   return (
@@ -15,7 +15,10 @@ function ResetMapButton() {
       type="button"
       aria-label="Recenter map on Nashville"
       title="Recenter map on Nashville"
-      onClick={() => map.setView(NASHVILLE_CENTER, 11)}
+      onClick={() => {
+        map.setView(NASHVILLE_CENTER, 11)
+        onReset()
+      }}
     >
       <span aria-hidden="true">⌖</span>
       <span>Reset view</span>
@@ -51,10 +54,11 @@ function incidentPopup(details) {
       <div><dt>Status</dt><dd>${escapeHtml(details.incident_status)}</dd></div>
       <div><dt>Report</dt><dd>${escapeHtml(details.incident_number)}</dd></div>
     </dl>
+    <button class="popup-details-button" type="button">View full details</button>
   </div>`
 }
 
-function IncidentLayer({ incidents }) {
+function IncidentLayer({ incidents, onIncidentSelected }) {
   const map = useMap()
 
   useEffect(() => {
@@ -74,6 +78,11 @@ function IncidentLayer({ incidents }) {
           if (!response.ok) throw new Error('Unable to load incident details.')
           const data = await response.json()
           marker.bindPopup(incidentPopup(data.incident)).openPopup()
+          marker.getPopup().getElement()?.querySelector('.popup-details-button')?.addEventListener(
+            'click',
+            () => onIncidentSelected(data.incident),
+            { once: true },
+          )
         } catch (error) {
           marker.bindPopup(escapeHtml(error.message)).openPopup()
         }
@@ -83,7 +92,7 @@ function IncidentLayer({ incidents }) {
 
     layerGroup.addTo(map)
     return () => layerGroup.removeFrom(map)
-  }, [incidents, map])
+  }, [incidents, map, onIncidentSelected])
 
   return null
 }
@@ -103,6 +112,7 @@ function App() {
   const [filterRadius, setFilterRadius] = useState(null)
   const [isGeocoding, setIsGeocoding] = useState(false)
   const [isDropPinMode, setIsDropPinMode] = useState(false)
+  const [selectedIncident, setSelectedIncident] = useState(null)
 
   const handleAuth = () => {
     setIsLoggedIn(true)
@@ -132,6 +142,19 @@ function App() {
     setIsDropPinMode(false)
     applyLocationFilter(center)
   }
+
+  const handleReset = () => {
+    setAddress('')
+    setIsDropPinMode(false)
+    setFilterCenter(null)
+    setFilterRadius(null)
+    setMapError('')
+    setIsLoadingIncidents(true)
+  }
+
+  const handleIncidentSelected = useCallback((incident) => {
+    setSelectedIncident(incident)
+  }, [])
 
   const handleAddressSubmit = async (event) => {
     event.preventDefault()
@@ -337,7 +360,7 @@ function App() {
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             <MapClickHandler enabled={isDropPinMode} onSelect={handleMapLocation} />
-            <IncidentLayer incidents={incidents} />
+            <IncidentLayer incidents={incidents} onIncidentSelected={handleIncidentSelected} />
             {filterCenter && filterRadius && (
               <>
                 <Circle
@@ -352,8 +375,40 @@ function App() {
                 />
               </>
             )}
-            <ResetMapButton />
+            <ResetMapButton onReset={handleReset} />
           </MapContainer>
+          {selectedIncident && (
+            <aside className="incident-detail-panel" aria-label="Incident details">
+              <div className="detail-panel-header">
+                <div>
+                  <p className="popup-kicker">Incident #{selectedIncident.incident_id}</p>
+                  <h2>{selectedIncident.offense_description || 'Incident details'}</h2>
+                </div>
+                <button
+                  className="close-detail-button"
+                  type="button"
+                  aria-label="Close incident details"
+                  onClick={() => setSelectedIncident(null)}
+                >
+                  ×
+                </button>
+              </div>
+              <dl className="detail-list">
+                <div><dt>Incident number</dt><dd>{selectedIncident.incident_number || 'Unknown'}</dd></div>
+                <div><dt>Occurred</dt><dd>{selectedIncident.incident_occurred || 'Unknown'}</dd></div>
+                <div><dt>Location</dt><dd>{selectedIncident.incident_location || 'Unknown'}</dd></div>
+                <div><dt>Report type</dt><dd>{selectedIncident.report_type_desc || 'Unknown'}</dd></div>
+                <div><dt>Incident status</dt><dd>{selectedIncident.incident_status || 'Unknown'}</dd></div>
+                <div><dt>Investigation</dt><dd>{selectedIncident.investigation_status || 'Unknown'}</dd></div>
+                <div><dt>Weapon</dt><dd>{selectedIncident.weapon_description || 'Unknown'}</dd></div>
+                <div><dt>Domestic related</dt><dd>{selectedIncident.domestic_related || 'Unknown'}</dd></div>
+                <div><dt>ZIP code</dt><dd>{selectedIncident.zip_code || 'Unknown'}</dd></div>
+                <div><dt>Coordinates</dt><dd>{selectedIncident.latitude}, {selectedIncident.longitude}</dd></div>
+                <div><dt>Primary key</dt><dd>{selectedIncident.primary_key || 'Unknown'}</dd></div>
+                <div><dt>Object ID</dt><dd>{selectedIncident.object_id || 'Unknown'}</dd></div>
+              </dl>
+            </aside>
+          )}
           {mapError && <div className="map-error" role="status">{mapError}</div>}
           {!isLoadingIncidents && !mapError && incidents.length === 0 && (
             <div className="map-empty" role="status">No incidents found for {selectedYear}.</div>

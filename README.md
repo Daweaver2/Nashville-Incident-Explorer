@@ -1,5 +1,16 @@
 # Nashville Incident Explorer
 
+## Run the App
+
+From the repository root, start both the API and frontend with:
+
+```bash
+npm run dev
+```
+
+The frontend will be available at the Vite URL, usually `http://localhost:5173`.
+Press `Ctrl+C` once to stop both processes.
+
 A full-stack web application for exploring and querying Nashville (MNPD) open incident data.
 
 ## Tech Stack
