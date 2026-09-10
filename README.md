@@ -1,5 +1,18 @@
 # Nashville Incident Explorer
 
+## First-Time Setup
+
+After cloning the repository, run this from the repository root:
+
+```bash
+npm run setup
+```
+
+The setup command checks for Node.js 20.19.0 or newer, uses `nvm` to install and
+select that version when available, and installs dependencies for both the
+frontend and API. If `nvm` is not installed, follow the printed Node.js upgrade
+command and run `npm run setup` again.
+
 ## Run the App
 
 From the repository root, start both the API and frontend with:
