@@ -4,6 +4,21 @@ Explore publicly available Metro Nashville Police Department incident data on an
 interactive map. Select a year, search for an address or drop a pin, filter the
 results by distance, and open an incident to view its details.
 
+## First-Time Setup
+
+After cloning the repository, run this from the repository root:
+
+```bash
+npm run setup
+```
+
+The setup command checks for Node.js 20.19.0 or newer, uses `nvm` to install and
+select that version when available, and installs dependencies for both the
+frontend and API. If `nvm` is not installed, follow the printed Node.js upgrade
+command and run `npm run setup` again.
+
+## Run the App
+
 > This project is an exploratory data viewer. It is not an emergency service and
 > the data should not be treated as a complete or real-time account of public
 > safety activity.

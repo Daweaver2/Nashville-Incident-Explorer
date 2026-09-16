@@ -2,6 +2,7 @@
   "name": "nashville-incident-explorer",
   "private": true,
   "scripts": {
+    "setup": "node setup.js",
     "dev": "node dev.js"
   }
 }
