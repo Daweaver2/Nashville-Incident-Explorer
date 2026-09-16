@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import './App.css'
 
 const NASHVILLE_CENTER = [36.1627, -86.7816]
+const AUTH_STORAGE_KEY = 'nashville-incident-auth'
 
 function ResetMapButton({ onReset }) {
   const map = useMap()
@@ -32,6 +33,18 @@ function MapClickHandler({ enabled, onSelect }) {
       if (enabled) onSelect([event.latlng.lat, event.latlng.lng])
     },
   })
+  return null
+}
+
+function MapFocus({ incident }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (incident?.latitude && incident?.longitude) {
+      map.setView([Number(incident.latitude), Number(incident.longitude)], Math.max(map.getZoom(), 14), { animate: true })
+    }
+  }, [incident, map])
+
   return null
 }
 
@@ -99,7 +112,12 @@ function IncidentLayer({ incidents, onIncidentSelected }) {
 
 function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [auth, setAuth] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY)) || null } catch { return null }
+  })
+  const [authMode, setAuthMode] = useState('login')
+  const [authForm, setAuthForm] = useState({ login: '', username: '', email: '', password: '' })
+  const [authError, setAuthError] = useState('')
   const [isDarkMode, setIsDarkMode] = useState(true)
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
   const [years, setYears] = useState([new Date().getFullYear()])
@@ -113,10 +131,52 @@ function App() {
   const [isGeocoding, setIsGeocoding] = useState(false)
   const [isDropPinMode, setIsDropPinMode] = useState(false)
   const [selectedIncident, setSelectedIncident] = useState(null)
+  const [incidentNumber, setIncidentNumber] = useState('')
+  const [isSearchingIncident, setIsSearchingIncident] = useState(false)
+  const [comments, setComments] = useState([])
+  const [commentsIncidentId, setCommentsIncidentId] = useState(null)
+  const [commentText, setCommentText] = useState('')
+  const [commentError, setCommentError] = useState('')
 
-  const handleAuth = () => {
-    setIsLoggedIn(true)
-    setIsMenuOpen(true)
+  const handleAuthSubmit = async (event) => {
+    event.preventDefault()
+    setAuthError('')
+    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register'
+    const body = authMode === 'login'
+      ? { login: authForm.login, password: authForm.password }
+      : { username: authForm.username, email: authForm.email, password: authForm.password }
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to authenticate.')
+      setAuth(data)
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(data))
+      setAuthForm({ login: '', username: '', email: '', password: '' })
+    } catch (error) {
+      setAuthError(error.message)
+    }
+  }
+
+  const handleSignOut = () => {
+    setAuth(null)
+    localStorage.removeItem(AUTH_STORAGE_KEY)
+    setIsMenuOpen(false)
+  }
+
+  const updatePrivacy = async (isAnonymous) => {
+    if (!auth?.token) return
+    const response = await fetch('/api/auth/me', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.token}` },
+      body: JSON.stringify({ isAnonymous }),
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'Unable to update privacy setting.')
+    const nextAuth = { ...auth, user: data.user }
+    setAuth(nextAuth)
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextAuth))
   }
 
   const handleYearChange = (event) => {
@@ -154,7 +214,28 @@ function App() {
 
   const handleIncidentSelected = useCallback((incident) => {
     setSelectedIncident(incident)
+    setCommentText('')
+    setCommentError('')
   }, [])
+
+  const submitComment = async (event) => {
+    event.preventDefault()
+    if (!auth?.token || !selectedIncident) return
+    setCommentError('')
+    try {
+      const response = await fetch(`/api/incidents/${selectedIncident.incident_id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.token}` },
+        body: JSON.stringify({ commentText }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to add comment.')
+      setComments((currentComments) => [...currentComments, data.comment])
+      setCommentText('')
+    } catch (error) {
+      setCommentError(error.message)
+    }
+  }
 
   const handleAddressSubmit = async (event) => {
     event.preventDefault()
@@ -174,6 +255,30 @@ function App() {
       setMapError(error.message)
     } finally {
       setIsGeocoding(false)
+    }
+  }
+
+  const handleIncidentSearch = async (event) => {
+    event.preventDefault()
+    if (incidentNumber.trim().length < 2) {
+      setMapError('Enter at least 2 characters of an incident number.')
+      return
+    }
+
+    setIsSearchingIncident(true)
+    setMapError('')
+    try {
+      const query = encodeURIComponent(incidentNumber.trim())
+      const response = await fetch(`/api/incidents/search?incidentNumber=${query}`)
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to search incidents.')
+      if (data.incidents.length === 0) throw new Error(`No incident found matching “${incidentNumber.trim()}”.`)
+      handleIncidentSelected(data.incidents[0])
+      if (data.incidents.length > 1) setMapError(`${data.incidents.length} matches found. Showing the most recent.`)
+    } catch (error) {
+      setMapError(error.message)
+    } finally {
+      setIsSearchingIncident(false)
     }
   }
 
@@ -220,6 +325,24 @@ function App() {
     return () => { isCurrent = false }
   }, [selectedYear, filterCenter, filterRadius])
 
+  useEffect(() => {
+    if (!selectedIncident) return undefined
+    let isCurrent = true
+    fetch(`/api/incidents/${selectedIncident.incident_id}/comments`)
+      .then((response) => {
+        if (!response.ok) throw new Error('Unable to load comments.')
+        return response.json()
+      })
+      .then(({ comments: incidentComments }) => {
+        if (isCurrent) {
+          setComments(incidentComments)
+          setCommentsIncidentId(selectedIncident.incident_id)
+        }
+      })
+      .catch((error) => { if (isCurrent) setCommentError(error.message) })
+    return () => { isCurrent = false }
+  }, [selectedIncident])
+
   return (
     <main className={`app-shell${isDarkMode ? '' : ' light-mode'}`}>
       <header className="topbar">
@@ -243,7 +366,7 @@ function App() {
 
           <div className="account-wrap">
           <button
-            className={`account-button${isLoggedIn ? ' signed-in' : ''}`}
+            className={`account-button${auth ? ' signed-in' : ''}`}
             type="button"
             aria-expanded={isMenuOpen}
             aria-haspopup="menu"
@@ -254,30 +377,58 @@ function App() {
               <circle cx="12" cy="8" r="3.5" />
               <path d="M5.5 20c.7-3.4 3-5.3 6.5-5.3s5.8 1.9 6.5 5.3" />
             </svg>
-            <span className="account-label">{isLoggedIn ? 'My account' : 'Account'}</span>
+            <span className="account-label">{auth ? 'My account' : 'Account'}</span>
             <span className="chevron" aria-hidden="true">⌄</span>
           </button>
 
           {isMenuOpen && (
             <div className="account-menu" role="menu">
-              {isLoggedIn ? (
+              {auth ? (
                 <>
-                  <div className="menu-heading">Signed in</div>
+                  <div className="menu-heading">Signed in as {auth.user.username}</div>
+                  <label className="anonymous-setting">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(auth.user.is_anonymous)}
+                      onChange={(event) => updatePrivacy(event.target.checked).catch((error) => setAuthError(error.message))}
+                    />
+                    Post comments anonymously
+                  </label>
+                  {authError && <p className="auth-error">{authError}</p>}
                   <button type="button" role="menuitem" onClick={() => setIsMenuOpen(false)}>
                     <span className="menu-icon">⚙</span>
                     Settings
                   </button>
-                  <button type="button" role="menuitem" onClick={() => { setIsLoggedIn(false); setIsMenuOpen(false) }}>
+                  <button type="button" role="menuitem" onClick={handleSignOut}>
                     <span className="menu-icon">↪</span>
                     Sign out
                   </button>
                 </>
               ) : (
                 <>
-                  <div className="menu-heading">Welcome</div>
-                  <p>Save searches and personalize your map.</p>
-                  <button className="menu-primary" type="button" role="menuitem" onClick={handleAuth}>Sign in</button>
-                  <button className="menu-secondary" type="button" role="menuitem" onClick={handleAuth}>Create an account</button>
+                  <div className="menu-heading">{authMode === 'login' ? 'Sign in to comment' : 'Create an account'}</div>
+                  <form className="auth-form" onSubmit={handleAuthSubmit}>
+                    {authMode === 'login' ? (
+                      <input
+                        value={authForm.login}
+                        onChange={(event) => setAuthForm({ ...authForm, login: event.target.value })}
+                        placeholder="Username or email"
+                        autoComplete="username"
+                        required
+                      />
+                    ) : (
+                      <>
+                        <input value={authForm.username} onChange={(event) => setAuthForm({ ...authForm, username: event.target.value })} placeholder="Username" autoComplete="username" required />
+                        <input value={authForm.email} onChange={(event) => setAuthForm({ ...authForm, email: event.target.value })} placeholder="Email" type="email" autoComplete="email" required />
+                      </>
+                    )}
+                    <input value={authForm.password} onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })} placeholder="Password" type="password" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} required />
+                    <button className="menu-primary" type="submit">{authMode === 'login' ? 'Sign in' : 'Create account'}</button>
+                  </form>
+                  {authError && <p className="auth-error">{authError}</p>}
+                  <button className="auth-switch" type="button" onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError('') }}>
+                    {authMode === 'login' ? 'Need an account?' : 'Already have an account?'}
+                  </button>
                 </>
               )}
             </div>
@@ -300,6 +451,19 @@ function App() {
                 {years.map((year) => <option key={year} value={year}>{year}</option>)}
               </select>
             </label>
+            <form className="incident-search" onSubmit={handleIncidentSearch}>
+              <label htmlFor="incident-number">Track an incident</label>
+              <div>
+                <input
+                  id="incident-number"
+                  type="search"
+                  value={incidentNumber}
+                  onChange={(event) => setIncidentNumber(event.target.value)}
+                  placeholder="Incident number"
+                />
+                <button type="submit" disabled={isSearchingIncident}>{isSearchingIncident ? 'Searching...' : 'Search'}</button>
+              </div>
+            </form>
             <span className="status"><span className="status-dot" />{isLoadingIncidents ? 'Loading' : `${incidents.length} mapped`}</span>
           </div>
         </div>
@@ -359,6 +523,7 @@ function App() {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
+            <MapFocus incident={selectedIncident} />
             <MapClickHandler enabled={isDropPinMode} onSelect={handleMapLocation} />
             <IncidentLayer incidents={incidents} onIncidentSelected={handleIncidentSelected} />
             {filterCenter && filterRadius && (
@@ -378,36 +543,79 @@ function App() {
             <ResetMapButton onReset={handleReset} />
           </MapContainer>
           {selectedIncident && (
-            <aside className="incident-detail-panel" aria-label="Incident details">
-              <div className="detail-panel-header">
-                <div>
-                  <p className="popup-kicker">Incident #{selectedIncident.incident_id}</p>
-                  <h2>{selectedIncident.offense_description || 'Incident details'}</h2>
+            <div className="incident-workspace">
+              <section className="comments-panel" aria-label="Incident discussion">
+                <div className="comments-page-header">
+                  <div>
+                    <p className="popup-kicker">Incident #{selectedIncident.incident_id}</p>
+                    <h2>Community discussion</h2>
+                    <p>Share context and observations about this incident.</p>
+                  </div>
+                  <button
+                    className="close-detail-button"
+                    type="button"
+                    aria-label="Close incident workspace"
+                    onClick={() => setSelectedIncident(null)}
+                  >
+                    ×
+                  </button>
                 </div>
-                <button
-                  className="close-detail-button"
-                  type="button"
-                  aria-label="Close incident details"
-                  onClick={() => setSelectedIncident(null)}
-                >
-                  ×
-                </button>
-              </div>
-              <dl className="detail-list">
-                <div><dt>Incident number</dt><dd>{selectedIncident.incident_number || 'Unknown'}</dd></div>
-                <div><dt>Occurred</dt><dd>{selectedIncident.incident_occurred || 'Unknown'}</dd></div>
-                <div><dt>Location</dt><dd>{selectedIncident.incident_location || 'Unknown'}</dd></div>
-                <div><dt>Report type</dt><dd>{selectedIncident.report_type_desc || 'Unknown'}</dd></div>
-                <div><dt>Incident status</dt><dd>{selectedIncident.incident_status || 'Unknown'}</dd></div>
-                <div><dt>Investigation</dt><dd>{selectedIncident.investigation_status || 'Unknown'}</dd></div>
-                <div><dt>Weapon</dt><dd>{selectedIncident.weapon_description || 'Unknown'}</dd></div>
-                <div><dt>Domestic related</dt><dd>{selectedIncident.domestic_related || 'Unknown'}</dd></div>
-                <div><dt>ZIP code</dt><dd>{selectedIncident.zip_code || 'Unknown'}</dd></div>
-                <div><dt>Coordinates</dt><dd>{selectedIncident.latitude}, {selectedIncident.longitude}</dd></div>
-                <div><dt>Primary key</dt><dd>{selectedIncident.primary_key || 'Unknown'}</dd></div>
-                <div><dt>Object ID</dt><dd>{selectedIncident.object_id || 'Unknown'}</dd></div>
-              </dl>
-            </aside>
+                <div className="discussion-rule" />
+                <div className="comments-heading">
+                  <div>
+                    <h3>{comments.length} {comments.length === 1 ? 'comment' : 'comments'}</h3>
+                  </div>
+                </div>
+                {commentsIncidentId !== selectedIncident.incident_id && <p className="comments-muted">Loading comments...</p>}
+                {commentsIncidentId === selectedIncident.incident_id && comments.length === 0 && <p className="comments-muted">No comments yet.</p>}
+                <div className="comment-list">
+                  {commentsIncidentId === selectedIncident.incident_id && comments.map((comment) => (
+                    <article className="comment" key={comment.comment_id}>
+                      <div className="comment-meta"><strong>{comment.username}</strong><time>{new Date(comment.created_at).toLocaleString()}</time></div>
+                      <p>{comment.comment_text}</p>
+                    </article>
+                  ))}
+                </div>
+                {auth ? (
+                  <form className="comment-form" onSubmit={submitComment}>
+                    <textarea value={commentText} onChange={(event) => setCommentText(event.target.value)} maxLength="2000" placeholder="Add a respectful comment..." required />
+                    <button type="submit">Post comment</button>
+                  </form>
+                ) : (
+                  <p className="comments-muted">Sign in from the account menu to join the discussion.</p>
+                )}
+                {commentError && <p className="auth-error">{commentError}</p>}
+              </section>
+              <aside className="incident-detail-panel" aria-label="Incident details">
+                <div className="detail-panel-header">
+                  <div>
+                    <p className="popup-kicker">Incident details</p>
+                    <h2>{selectedIncident.offense_description || 'Incident details'}</h2>
+                  </div>
+                  <span className="detail-incident-id">#{selectedIncident.incident_id}</span>
+                </div>
+                <dl className="detail-list">
+                  <div><dt>Incident number</dt><dd>{selectedIncident.incident_number || 'Unknown'}</dd></div>
+                  <div><dt>Occurred</dt><dd>{selectedIncident.incident_occurred || 'Unknown'}</dd></div>
+                  <div><dt>Reported</dt><dd>{selectedIncident.incident_reported || 'Unknown'}</dd></div>
+                  <div><dt>Location</dt><dd>{selectedIncident.incident_location || 'Unknown'}</dd></div>
+                  <div><dt>Location type</dt><dd>{selectedIncident.location_description || 'Unknown'}</dd></div>
+                  <div><dt>Report type</dt><dd>{selectedIncident.report_type_desc || 'Unknown'}</dd></div>
+                  <div><dt>Incident status</dt><dd>{selectedIncident.incident_status || 'Unknown'}</dd></div>
+                  <div><dt>Investigation</dt><dd>{selectedIncident.investigation_status || 'Unknown'}</dd></div>
+                  <div><dt>Offense code</dt><dd>{selectedIncident.offense_nibrs || 'Unknown'}</dd></div>
+                  <div><dt>Weapon</dt><dd>{selectedIncident.weapon_description || 'Unknown'}</dd></div>
+                  <div><dt>Primary weapon</dt><dd>{selectedIncident.weapon_primary || 'Unknown'}</dd></div>
+                  <div><dt>Domestic related</dt><dd>{selectedIncident.domestic_related || 'Unknown'}</dd></div>
+                  <div><dt>Victim type</dt><dd>{selectedIncident.victim_type || 'Unknown'}</dd></div>
+                  <div><dt>Victim description</dt><dd>{selectedIncident.victim_description || 'Unknown'}</dd></div>
+                  <div><dt>ZIP code</dt><dd>{selectedIncident.zip_code || 'Unknown'}</dd></div>
+                  <div><dt>Coordinates</dt><dd>{selectedIncident.latitude}, {selectedIncident.longitude}</dd></div>
+                  <div><dt>Primary key</dt><dd>{selectedIncident.primary_key || 'Unknown'}</dd></div>
+                  <div><dt>Object ID</dt><dd>{selectedIncident.object_id || 'Unknown'}</dd></div>
+                </dl>
+              </aside>
+            </div>
           )}
           {mapError && <div className="map-error" role="status">{mapError}</div>}
           {!isLoadingIncidents && !mapError && incidents.length === 0 && (

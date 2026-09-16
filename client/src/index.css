@@ -1,6 +1,6 @@
 :root {
   --sans: 'Trebuchet MS', 'Segoe UI', sans-serif;
-  --heading: 'Trebuchet MS', 'Segoe UI', sans-serif;
+  --heading: Georgia, 'Times New Roman', serif;
   font: 16px/1.45 var(--sans);
   color: #f5f6ef;
   background: #191b1a;

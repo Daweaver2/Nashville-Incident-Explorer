@@ -20,9 +20,15 @@ const columns = [
   'longitude',
   'zip_code',
   'incident_occurred',
+  'incident_reported',
   'offense_description',
+  'offense_nibrs',
   'weapon_description',
+  'weapon_primary',
   'domestic_related',
+  'location_description',
+  'victim_type',
+  'victim_description',
 ];
 
 const insertSql = `
@@ -40,9 +46,15 @@ const insertSql = `
     longitude = VALUES(longitude),
     zip_code = VALUES(zip_code),
     incident_occurred = VALUES(incident_occurred),
+    incident_reported = VALUES(incident_reported),
     offense_description = VALUES(offense_description),
+    offense_nibrs = VALUES(offense_nibrs),
     weapon_description = VALUES(weapon_description),
-    domestic_related = VALUES(domestic_related)
+    weapon_primary = VALUES(weapon_primary),
+    domestic_related = VALUES(domestic_related),
+    location_description = VALUES(location_description),
+    victim_type = VALUES(victim_type),
+    victim_description = VALUES(victim_description)
 `;
 
 function getOption(name, fallback) {
@@ -89,9 +101,15 @@ function mapRow(row) {
     longitude,
     nullable(row.ZIP_Code),
     mysqlDate(row.Incident_Occurred),
+    mysqlDate(row.Incident_Reported),
     nullable(row.Offense_Description),
+    nullable(row.Offense_NIBRS),
     nullable(row.Weapon_Description),
+    nullable(row.Weapon_Primary),
     nullable(row.Domestic_Related),
+    nullable(row.Location_Description),
+    nullable(row.Victim_Type),
+    nullable(row.Victim_Description),
   ];
 }
 
@@ -102,6 +120,25 @@ async function insertBatch(connection, rows) {
   const values = rows.flat();
   const sql = insertSql.replace(`VALUES (${columns.map(() => '?').join(', ')})`, `VALUES ${placeholders}`);
   await connection.query(sql, values);
+}
+
+async function ensureImportSchema(connection) {
+  const columnsToAdd = [
+    ['incident_reported', 'DATETIME NULL'],
+    ['offense_nibrs', 'VARCHAR(255) NULL'],
+    ['weapon_primary', 'VARCHAR(255) NULL'],
+    ['location_description', 'VARCHAR(255) NULL'],
+    ['victim_type', 'VARCHAR(255) NULL'],
+    ['victim_description', 'VARCHAR(255) NULL'],
+  ];
+  for (const [column, definition] of columnsToAdd) {
+    const [rows] = await connection.execute(`
+      SELECT COUNT(*) AS column_count
+      FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = 'incidents' AND column_name = ?
+    `, [column]);
+    if (rows[0].column_count === 0) await connection.query(`ALTER TABLE incidents ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 async function main() {
@@ -120,6 +157,7 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
   });
+  await ensureImportSchema(connection);
 
   let read = 0;
   let imported = 0;
